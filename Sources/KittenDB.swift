@@ -540,6 +540,27 @@ public class Collection : Sequence {
         try self.header.append(document)
     }
     
+    public func count() throws -> Int {
+        var iterating: CollectionPage = header
+        
+        var iterator = iterating.makeIterator()
+        var count = 0
+        
+        while true {
+            guard iterator.next() != nil else {
+                guard let next = try iterating.nextPage?.resolve() as? CollectionPage else {
+                    return count
+                }
+                
+                iterating = next
+                iterator = iterating.makeIterator()
+                continue
+            }
+            
+            count += 1
+        }
+    }
+
     public func makeIterator() -> AnyIterator<Document> {
         var iterating: CollectionPage = header
         
