@@ -41,6 +41,7 @@ public class Database {
         case invalidFileStructure
         case invalidPage
         case invalidDocument
+        case invalidDocumentReference
     }
     
     public init(atPath filePath: String) throws {
@@ -78,6 +79,11 @@ public class Database {
         }
     }
     
+    func write(_ page: Page) {
+        self.handle.seek(toFileOffset: page.filePosition)
+        self.handle.write(page.data)
+    }
+    
     func read(_ range: Range<Int>) -> Data {
         self.handle.seek(toFileOffset: UInt64(range.lowerBound))
         return self.handle.readData(ofLength: range.upperBound - range.lowerBound)
@@ -99,6 +105,7 @@ public class Database {
 
 struct DocumentReference {
     let position: UInt64
+    let pagePosition: Int
     let database: Database
     
     func resolve() throws -> Document? {
@@ -370,6 +377,8 @@ class MasterPage : Page, Sequence {
         for (position, byte) in position.makeBytes().enumerated() {
             self.data[offset + 2 + position] = byte
         }
+        
+        database.write(self)
     }
 }
 
@@ -393,8 +402,20 @@ extension CollectionPage {
                 return nil
             }
             
-            return DocumentReference(position: position, database: self.database)
+            return DocumentReference(position: position, pagePosition: i, database: self.database)
         }
+    }
+    
+    func remove(_ reference: DocumentReference) throws {
+        guard reference.pagePosition > 0 && reference.pagePosition < self.length.byteLength else {
+            throw Database.Error.invalidDocumentReference
+        }
+        
+        for i in 0..<8 {
+            self.data[reference.pagePosition + i] = 0
+        }
+        
+        database.write(self)
     }
     
     func append(_ document: Document) throws {
@@ -429,6 +450,8 @@ extension CollectionPage {
         for (position, byte) in position.makeBytes().enumerated() {
             self.data[offset + position] = byte
         }
+        
+        database.write(self)
     }
 }
 
@@ -538,6 +561,40 @@ public class Collection : Sequence {
     
     public func append(_ document: Document) throws {
         try self.header.append(document)
+    }
+    
+    @discardableResult
+    public func remove(_ matching: Document) throws -> Int {
+        var iterating: CollectionPage = header
+        
+        var iterator = iterating.makeIterator()
+        var count = 0
+        
+        documents: while true {
+            guard let documentPointer = iterator.next() else {
+                guard let next = try iterating.nextPage?.resolve() as? CollectionPage else {
+                    return count
+                }
+                
+                iterating = next
+                iterator = iterating.makeIterator()
+                continue documents
+            }
+            
+            guard let document = try documentPointer.resolve() else {
+                return count
+            }
+            
+            for (key, value) in matching {
+                guard document[key]?.makeBinary() ?? [] == value.makeBinary() else {
+                    continue documents
+                }
+            }
+            
+            try iterating.remove(documentPointer)
+            
+            count += 1
+        }
     }
     
     public func count() throws -> Int {

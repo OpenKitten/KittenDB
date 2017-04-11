@@ -43,6 +43,10 @@ class KittenLiteTests: XCTestCase {
         for document in collection {
             XCTAssertEqual(Bool(document["awesome"]), true)
         }
+        
+        try collection.remove(["awesome": true])
+        
+        XCTAssertEqual(try collection.count(), 0)
     }
 
     static var allTests = [
