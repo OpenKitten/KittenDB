@@ -418,6 +418,26 @@ extension CollectionPage {
         database.write(self)
     }
     
+    func update(_ reference: DocumentReference, to other: Document) throws {
+        guard let referenced = try reference.resolve() else {
+            throw Database.Error.invalidDocumentReference
+        }
+        
+        if referenced.byteCount >= other.byteCount {
+            database.handle.seek(toFileOffset: reference.position)
+            database.handle.write(Data(other.bytes))
+        } else {
+            let offset = database.handle.seekToEndOfFile()
+            database.handle.write(Data(other.bytes))
+            
+            for (position, byte) in offset.makeBytes().enumerated() {
+                self.data[reference.pagePosition + position] = byte
+            }
+            
+            database.write(self)
+        }
+    }
+    
     func append(_ document: Document) throws {
         if let nextPage = try self.nextPage?.resolve() {
             guard let nextPage = nextPage as? BodyCollectionPage else {
@@ -564,16 +584,62 @@ public class Collection : Sequence {
     }
     
     @discardableResult
+    public func update(_ matching: Document, to other: Document) throws -> Int {
+        var count = 0
+        
+        try self.forEach { pointer, page in
+            guard let document = try pointer.resolve() else {
+                return false
+            }
+            
+            for (key, value) in matching {
+                guard document[key]?.makeBinary() ?? [] == value.makeBinary() else {
+                    return true
+                }
+            }
+            
+            try page.update(pointer, to: other)
+            
+            count += 1
+            return true
+        }
+        
+        return count
+    }
+    
+    @discardableResult
     public func remove(_ matching: Document) throws -> Int {
+        var count = 0
+        
+        try self.forEach { pointer, page in
+            guard let document = try pointer.resolve() else {
+                return false
+            }
+            
+            for (key, value) in matching {
+                guard document[key]?.makeBinary() ?? [] == value.makeBinary() else {
+                    return true
+                }
+            }
+            
+            try page.remove(pointer)
+            
+            count += 1
+            return true
+        }
+        
+        return count
+    }
+    
+    func forEach(closure: (DocumentReference, CollectionPage) throws -> (Bool)) throws {
         var iterating: CollectionPage = header
         
         var iterator = iterating.makeIterator()
-        var count = 0
         
         documents: while true {
             guard let documentPointer = iterator.next() else {
                 guard let next = try iterating.nextPage?.resolve() as? CollectionPage else {
-                    return count
+                    return
                 }
                 
                 iterating = next
@@ -581,19 +647,9 @@ public class Collection : Sequence {
                 continue documents
             }
             
-            guard let document = try documentPointer.resolve() else {
-                return count
+            guard try closure(documentPointer, iterating) else {
+                return
             }
-            
-            for (key, value) in matching {
-                guard document[key]?.makeBinary() ?? [] == value.makeBinary() else {
-                    continue documents
-                }
-            }
-            
-            try iterating.remove(documentPointer)
-            
-            count += 1
         }
     }
     

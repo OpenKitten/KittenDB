@@ -44,7 +44,15 @@ class KittenLiteTests: XCTestCase {
             XCTAssertEqual(Bool(document["awesome"]), true)
         }
         
-        try collection.remove(["awesome": true])
+        try collection.update(["awesome": true], to: ["awesome": false])
+        
+        XCTAssertEqual(try collection.count(), 4)
+        
+        for document in collection {
+            XCTAssertEqual(Bool(document["awesome"]), false)
+        }
+        
+        try collection.remove(["awesome": false])
         
         XCTAssertEqual(try collection.count(), 0)
     }
